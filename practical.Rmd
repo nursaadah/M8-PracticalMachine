@@ -1,0 +1,393 @@
+---
+title: "Practical Machine Learning"
+author: "nursaadah"
+date: "Monday, December 28, 2015"
+output: html_document
+---
+
+###Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+###Data 
+
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+###Procedure
+
+First, load the appropriate packages and set the seed for reproduceable results.
+
+```{r}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+```
+Then import the data and to verify that the training data and the test data are identical.
+```{r}
+# Download data.
+url_raw_training <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+file_dest_training <- "pml-training.csv"
+#download.file(url=url_raw_training, destfile=file_dest_training, method="curl")
+url_raw_testing <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+file_dest_testing <- "pml-testing.csv"
+#download.file(url=url_raw_testing, destfile=file_dest_testing, method="curl")
+
+# Import the data treating empty values as NA.
+df_training <- read.csv(file_dest_training, na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(df_training)
+df_testing <- read.csv(file_dest_testing, na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(df_testing)
+
+# Verify that the column names (excluding classe and problem_id) are identical in the training and test set.
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+```
+
+```{r}
+## [1] TRUE
+```
+
+Eliminate both NA columns and other columns.
+```{r}
+# Count the number of non-NAs in each col.
+nonNAs <- function(x) {
+    as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+
+# Build vector of missing data or NA columns to drop.
+colcnts <- nonNAs(df_training)
+drops <- c()
+for (cnt in 1:length(colcnts)) {
+    if (colcnts[cnt] < nrow(df_training)) {
+        drops <- c(drops, colnames_train[cnt])
+    }
+}
+
+# Drop NA data and the first 7 columns as they're unnecessary for predicting.
+df_training <- df_training[,!(names(df_training) %in% drops)]
+df_training <- df_training[,8:length(colnames(df_training))]
+
+df_testing <- df_testing[,!(names(df_testing) %in% drops)]
+df_testing <- df_testing[,8:length(colnames(df_testing))]
+
+# Show remaining columns.
+colnames(df_training)
+```
+
+###Algorithm
+Divide the given training set into four roughly equal sets, each of which was then split into a training set (comprising 60% of the entries) and a testing set (comprising 40% of the entries).
+
+```{r}
+# Divide the given training set into 4 roughly equal sets.
+set.seed(666)
+ids_small <- createDataPartition(y=df_training$classe, p=0.25, list=FALSE)
+df_small1 <- df_training[ids_small,]
+df_remainder <- df_training[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.33, list=FALSE)
+df_small2 <- df_remainder[ids_small,]
+df_remainder <- df_remainder[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.5, list=FALSE)
+df_small3 <- df_remainder[ids_small,]
+df_small4 <- df_remainder[-ids_small,]
+# Divide each of these 4 sets into training (60%) and test (40%) sets.
+set.seed(666)
+inTrain <- createDataPartition(y=df_small1$classe, p=0.6, list=FALSE)
+df_small_training1 <- df_small1[inTrain,]
+df_small_testing1 <- df_small1[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small2$classe, p=0.6, list=FALSE)
+df_small_training2 <- df_small2[inTrain,]
+df_small_testing2 <- df_small2[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small3$classe, p=0.6, list=FALSE)
+df_small_training3 <- df_small3[inTrain,]
+df_small_testing3 <- df_small3[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small4$classe, p=0.6, list=FALSE)
+df_small_training4 <- df_small4[inTrain,]
+df_small_testing4 <- df_small4[-inTrain,]
+```
+I chose two different algorithms via the caret package which is classification trees (method = rpart) and random forests (method = rf).
+
+###Evaluation
+1. Classification Tree
+```{r}
+# Train on training set 1 of 4 with no extra features.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+```
+
+```{r}
+## CART 
+## 
+## 2946 samples
+##   52 predictors
+##    5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Bootstrapped (25 reps) 
+## 
+## Summary of sample sizes: 2946, 2946, 2946, 2946, 2946, 2946, ... 
+## 
+## Resampling results across tuning parameters:
+## 
+##   cp      Accuracy  Kappa   Accuracy SD  Kappa SD
+##   0.0346  0.531     0.4     0.0355       0.0479  
+##   0.0442  0.471     0.308   0.0555       0.0967  
+##   0.116   0.324     0.0602  0.0456       0.0641  
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was cp = 0.0346.
+```
+
+```{r}
+print(modFit$finalModel, digits=3)
+```
+
+```{r}
+## n= 2946 
+## 
+## node), split, n, loss, yval, (yprob)
+##       * denotes terminal node
+## 
+##   1) root 2946 2110 A (0.28 0.19 0.17 0.16 0.18)  
+##     2) roll_belt< 130 2699 1860 A (0.31 0.21 0.19 0.18 0.11)  
+##       4) pitch_forearm< -34 220    0 A (1 0 0 0 0) *
+##       5) pitch_forearm>=-34 2479 1860 A (0.25 0.23 0.21 0.19 0.12)  
+##        10) yaw_belt>=168 138   15 A (0.89 0.072 0 0.036 0) *
+##        11) yaw_belt< 168 2341 1780 B (0.21 0.24 0.22 0.2 0.13)  
+##          22) magnet_dumbbell_z< -83.5 305  134 A (0.56 0.3 0.046 0.069 0.02) *
+##          23) magnet_dumbbell_z>=-83.5 2036 1540 C (0.16 0.23 0.25 0.22 0.14)  
+##            46) roll_dumbbell< 57.7 1209  776 C (0.18 0.19 0.36 0.16 0.11) *
+##            47) roll_dumbbell>=57.7 827  565 D (0.12 0.29 0.081 0.32 0.19)  
+##              94) magnet_belt_y>=590 687  433 D (0.11 0.35 0.07 0.37 0.1)  
+##               188) total_accel_dumbbell>=5.5 474  260 B (0.097 0.45 0.1 0.22 0.13) *
+##               189) total_accel_dumbbell< 5.5 213   62 D (0.14 0.11 0 0.71 0.042) *
+##              95) magnet_belt_y< 590 140   55 E (0.19 0.014 0.14 0.057 0.61) *
+##     3) roll_belt>=130 247    1 E (0.004 0 0 0 1) *
+```
+
+```{r}
+fancyRpartPlot(modFit$finalModel)
+```
+png("CTM1.png", width=480, height=480)
+
+```{r}
+# Run against testing set 1 of 4 with no extra features.
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+```
+
+```{r}
+## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction   A   B   C   D   E
+##          A 368  74  11  28   8
+##          B  24 151  25  83  30
+##          C 135 148 288 138  99
+##          D  15   7   0  69   4
+##          E  16   0  18   3 219
+## 
+## Overall Statistics
+##                                           
+##                Accuracy : 0.5584          
+##                  95% CI : (0.5361, 0.5805)
+##     No Information Rate : 0.2845          
+##     P-Value [Acc > NIR] : < 2.2e-16       
+##                                           
+##                   Kappa : 0.4441          
+##  Mcnemar's Test P-Value : < 2.2e-16       
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            0.6595   0.3974   0.8421  0.21495   0.6083
+## Specificity            0.9138   0.8975   0.6788  0.98415   0.9769
+## Pos Pred Value         0.7526   0.4824   0.3564  0.72632   0.8555
+## Neg Pred Value         0.8709   0.8610   0.9532  0.86495   0.9173
+## Prevalence             0.2845   0.1938   0.1744  0.16369   0.1836
+## Detection Rate         0.1877   0.0770   0.1469  0.03519   0.1117
+## Detection Prevalence   0.2494   0.1596   0.4120  0.04844   0.1305
+## Balanced Accuracy      0.7866   0.6475   0.7605  0.59955   0.7926
+```
+
+
+###Random Forest
+
+
+```{r}
+# Train on training set with only cross validation.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., method="rf", trControl=trainControl(method = "cv", number = 4), data=df_small_training1)
+print(modFit, digits=3)
+```
+
+```{r}
+## Random Forest 
+## 
+## 2946 samples
+##   52 predictors
+##    5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Cross-Validated (4 fold) 
+## 
+## Summary of sample sizes: 2212, 2209, 2208, 2209 
+## 
+## Resampling results across tuning parameters:
+## 
+##   mtry  Accuracy  Kappa  Accuracy SD  Kappa SD
+##   2     0.951     0.939  0.00449      0.0057  
+##   27    0.955     0.943  0.00582      0.00736 
+##   52    0.951     0.938  0.00888      0.0112  
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was mtry = 27.
+```
+
+```{r}
+# Run against testing 
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+```
+
+```{r}
+## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction   A   B   C   D   E
+##          A 555  12   1   0   1
+##          B   2 358  12   1   0
+##          C   0   9 324   6   4
+##          D   0   1   5 309   1
+##          E   1   0   0   5 354
+## 
+## Overall Statistics
+##                                           
+##                Accuracy : 0.9689          
+##                  95% CI : (0.9602, 0.9761)
+##     No Information Rate : 0.2845          
+##     P-Value [Acc > NIR] : < 2.2e-16       
+##                                           
+##                   Kappa : 0.9606          
+##  Mcnemar's Test P-Value : NA              
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            0.9946   0.9421   0.9474   0.9626   0.9833
+## Specificity            0.9900   0.9905   0.9883   0.9957   0.9963
+## Pos Pred Value         0.9754   0.9598   0.9446   0.9778   0.9833
+## Neg Pred Value         0.9978   0.9861   0.9889   0.9927   0.9963
+## Prevalence             0.2845   0.1938   0.1744   0.1637   0.1836
+## Detection Rate         0.2830   0.1826   0.1652   0.1576   0.1805
+## Detection Prevalence   0.2902   0.1902   0.1749   0.1611   0.1836
+## Balanced Accuracy      0.9923   0.9663   0.9678   0.9792   0.9898
+```
+
+```{r}
+# Run against 20 testing set
+print(predict(modFit, newdata=df_testing))
+```
+
+```{r}
+##  [1] B A A A A E D B A A B C B A E E A B B B
+## Levels: A B C D E
+```
+
+```{r}
+# Train on training set with only both preprocessing and cross validation.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training1)
+print(modFit, digits=3)
+```
+
+```{r}
+## Random Forest 
+## 
+## 2946 samples
+##   52 predictors
+##    5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## Pre-processing: centered, scaled 
+## Resampling: Cross-Validated (4 fold) 
+## 
+## Summary of sample sizes: 2212, 2209, 2208, 2209 
+## 
+## Resampling results across tuning parameters:
+## 
+##   mtry  Accuracy  Kappa  Accuracy SD  Kappa SD
+##   2     0.951     0.939  0.00382      0.00482 
+##   27    0.954     0.942  0.00466      0.0059  
+##   52    0.952     0.939  0.0107       0.0135  
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was mtry = 27.
+```
+
+```{r}
+# Run against testing set
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+```
+
+```{r}
+## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction   A   B   C   D   E
+##          A 555  10   0   0   0
+##          B   2 357  11   0   0
+##          C   0  12 327   6   5
+##          D   0   1   4 312   1
+##          E   1   0   0   3 354
+## 
+## Overall Statistics
+##                                           
+##                Accuracy : 0.9714          
+##                  95% CI : (0.9631, 0.9784)
+##     No Information Rate : 0.2845          
+##     P-Value [Acc > NIR] : < 2.2e-16       
+##                                           
+##                   Kappa : 0.9639          
+##  Mcnemar's Test P-Value : NA              
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            0.9946   0.9395   0.9561   0.9720   0.9833
+## Specificity            0.9929   0.9918   0.9858   0.9963   0.9975
+## Pos Pred Value         0.9823   0.9649   0.9343   0.9811   0.9888
+## Neg Pred Value         0.9979   0.9855   0.9907   0.9945   0.9963
+## Prevalence             0.2845   0.1938   0.1744   0.1637   0.1836
+## Detection Rate         0.2830   0.1820   0.1668   0.1591   0.1805
+## Detection Prevalence   0.2881   0.1887   0.1785   0.1622   0.1826
+## Balanced Accuracy      0.9937   0.9656   0.9710   0.9842   0.9904
+```
+
+```{r}
+# Run against 20 testing set 
+print(predict(modFit, newdata=df_testing))
+```
+
+```{r}
+##  [1] B A A A A E D B A A B C B A E E A B B B
+## Levels: A B C D E
+```
+
+###Conclusion
